@@ -1,0 +1,57 @@
+services:
+  media:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: media-service
+    restart: unless-stopped
+    depends_on:
+      media-db:
+        condition: service_healthy
+    ports:
+      - "8003:8003"
+    env_file:
+      - .env
+    volumes:
+      - ./api:/app/api:ro
+      - ./config:/app/config:ro
+      - ./db:/app/db:ro
+      - ./schemas:/app/schemas:ro
+      - ./services:/app/services:ro
+      - ./main.py:/app/main.py:ro
+      # Mount ADC for auto-discovery (Google libraries look here by default)
+      - ~/.config/gcloud/application_default_credentials.json:/root/.config/gcloud/application_default_credentials.json:ro
+    environment:
+      - GOOGLE_CLOUD_PROJECT=project-879ad864-ebf1-4aeb-8c8
+    networks:
+      - agora-network
+
+  media-db:
+    image: postgres:18-alpine
+    container_name: media-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: media
+      POSTGRES_PASSWORD: media
+      POSTGRES_DB: media
+      PGDATA: /var/lib/postgresql/18/data
+    ports:
+      - "5437:5432"
+    volumes:
+      - media_db_data:/var/lib/postgresql/data
+      - ./db/init/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U media -d media"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - agora-network
+
+volumes:
+  media_db_data:
+
+networks:
+  agora-network:
+    external: true
+    name: agora-network
