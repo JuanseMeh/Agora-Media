@@ -1,0 +1,36 @@
+[project]
+name = "media-service"
+version = "0.1.0"
+description = "Media upload, storage, and processing service for Agora"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn>=0.27.0",
+    "pydantic-settings>=2.2.0",
+    "asyncpg>=0.29.0",
+    "httpx>=0.27.0",
+    "orjson>=3.9.15",
+    "python-dotenv>=1.0.1",
+    "google-cloud-storage>=2.15.0",
+    "google-cloud-vision>=4.0.0",
+    "google-cloud-speech>=2.25.0",
+    "google-cloud-documentai>=2.29.0",
+    "marker-pdf>=1.1.0",
+    "python-multipart>=0.0.9",
+    "aiofiles>=24.1.0",
+    "Pillow>=10.2.0",
+    "filetype>=1.2.0",
+    "pypdf>=4.2.0",
+    "python-docx>=1.1.0",
+    "python-pptx>=0.6.23",
+    "html2text>=2024.2.26",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.1.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-httpx>=0.30.0",
+    "ruff>=0.3.0",
+]
