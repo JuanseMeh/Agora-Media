@@ -36,7 +36,7 @@ services:
       POSTGRES_DB: media
       PGDATA: /var/lib/postgresql/18/data
     ports:
-      - "5437:5432"
+      - "5438:5432"
     volumes:
       - media_db_data:/var/lib/postgresql/data
       - ./db/init/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro

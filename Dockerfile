@@ -1,6 +1,6 @@
-FROM python:3.11-slim-bookworm AS builder
+FROM --platform=$TARGETPLATFORM python:3.11-slim-bookworm AS builder
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+RUN pip install uv --no-cache-dir
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1
 
@@ -10,7 +10,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 COPY . .
 
-FROM python:3.11-slim-bookworm AS runtime
+FROM --platform=$TARGETPLATFORM python:3.11-slim-bookworm AS runtime
 
 WORKDIR /app
 
