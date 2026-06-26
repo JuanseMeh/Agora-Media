@@ -27,6 +27,7 @@ from schemas.models import (
 )
 from services import document_parser, speech, storage, vision
 from services.users_service import update_user_profile
+import services.workspace_service as workspace_service
 from services.workspace_service import (
     link_file_to_assignment,
     link_file_to_submission,
@@ -203,6 +204,14 @@ async def upload_file(
     )
 
 
+async def _check_media_owner_or_shared(media: dict, media_id: str, user_id: str) -> None:
+    if media["user_id"] != user_id:
+        owner_id = media.get("user_id")
+        has_access = await workspace_service.check_media_access(media_id, user_id, owner_id)
+        if not has_access:
+            raise HTTPException(status_code=403, detail="Access denied.")
+
+
 @router.get("/{media_id}", response_model=MediaFileResponse)
 async def get_media(
     media_id: str,
@@ -211,8 +220,7 @@ async def get_media(
     media = await media_queries.get_media_file(media_id)
     if not media:
         raise HTTPException(status_code=404, detail="Media not found.")
-    if media["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Access denied.")
+    await _check_media_owner_or_shared(media, media_id, user_id)
     return MediaFileResponse(**_serialize_media(media))
 
 
@@ -224,8 +232,7 @@ async def download_media(
     media = await media_queries.get_media_file(media_id)
     if not media:
         raise HTTPException(status_code=404, detail="Media not found.")
-    if media["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Access denied.")
+    await _check_media_owner_or_shared(media, media_id, user_id)
 
     signed_url = await storage.get_signed_url(
         media["storage_path"], media["bucket_name"]
@@ -271,8 +278,7 @@ async def process_ocr(
     media = await media_queries.get_media_file(media_id)
     if not media:
         raise HTTPException(status_code=404, detail="Media not found.")
-    if media["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Access denied.")
+    await _check_media_owner_or_shared(media, media_id, user_id)
     if media["media_category"] not in ("image", "document"):
         raise HTTPException(status_code=400, detail="OCR only supported for images and documents.")
 
@@ -315,8 +321,7 @@ async def process_transcribe(
     media = await media_queries.get_media_file(media_id)
     if not media:
         raise HTTPException(status_code=404, detail="Media not found.")
-    if media["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Access denied.")
+    await _check_media_owner_or_shared(media, media_id, user_id)
     if media["media_category"] not in ("audio", "video"):
         raise HTTPException(
             status_code=400, detail="Transcription only supported for audio and video."
@@ -369,8 +374,7 @@ async def process_parse(
     media = await media_queries.get_media_file(media_id)
     if not media:
         raise HTTPException(status_code=404, detail="Media not found.")
-    if media["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Access denied.")
+    await _check_media_owner_or_shared(media, media_id, user_id)
     if media["media_category"] != "document":
         raise HTTPException(
             status_code=400, detail="Document parsing only supported for documents."
@@ -566,6 +570,7 @@ async def get_entity_content(
 @router.post("/internal/batch-process", response_model=BatchProcessResponse)
 async def batch_process_files(body: BatchProcessRequest):
     results = []
+    logger.info("batch-process called with %d media_ids: %s", len(body.media_ids), body.media_ids)
     for media_id in body.media_ids:
         media = await media_queries.get_media_file(media_id)
         if not media:
@@ -584,16 +589,19 @@ async def batch_process_files(body: BatchProcessRequest):
         if ocr and ocr.get("text"):
             text = ocr["text"]
             content_type = "ocr"
+            logger.info("media %s — using cached OCR text (%d chars): %s", media_id, len(text), text[:500])
 
         transcription = metadata.get("transcription", {})
         if not text and transcription and transcription.get("text"):
             text = transcription["text"]
             content_type = "transcription"
+            logger.info("media %s — using cached transcription (%d chars)", media_id, len(text))
 
         doc_parse = metadata.get("document_parse", {})
         if not text and doc_parse and doc_parse.get("markdown"):
             text = doc_parse["markdown"]
             content_type = "document_parse"
+            logger.info("media %s — using cached document parse (%d chars)", media_id, len(text))
 
         if not text:
             file_data = await storage.download_file(
@@ -603,9 +611,11 @@ async def batch_process_files(body: BatchProcessRequest):
                 category = media["media_category"]
                 result_data = None
                 if category == "image":
+                    logger.info("media %s — no cached text, running OCR (category=image, mime=%s)", media_id, media["mime_type"])
                     result_data = await vision.ocr_handwriting(file_data)
                     text = result_data.get("text", "")
                     content_type = "ocr"
+                    logger.info("media %s — OCR result: confidence=%s, text=%s", media_id, result_data.get("confidence", "N/A"), text[:500])
                 elif category == "audio":
                     result_data = await speech.transcribe_audio(
                         file_data, mime_type=media["mime_type"]
@@ -637,8 +647,11 @@ async def batch_process_files(body: BatchProcessRequest):
                         await media_queries.update_media_status(
                             media_id, "completed", {update_key: result_data}
                         )
+            else:
+                logger.warning("media %s — could not download file data", media_id)
 
         if text:
+            logger.info("media %s — returning text (%d chars, type=%s, filename=%s)", media_id, len(text), content_type, media["original_filename"])
             results.append(BatchProcessItem(
                 media_id=media_id,
                 text=text,
@@ -646,7 +659,10 @@ async def batch_process_files(body: BatchProcessRequest):
                 mime_type=media["mime_type"],
                 original_filename=media["original_filename"],
             ))
+        else:
+            logger.warning("media %s — no text extracted, returning empty result", media_id)
 
+    logger.info("batch-process returning %d results", len(results))
     return BatchProcessResponse(results=results)
 
 
@@ -658,8 +674,7 @@ async def stream_file(
     media = await media_queries.get_media_file(media_id)
     if not media:
         raise HTTPException(status_code=404, detail="Media not found.")
-    if media["user_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Access denied.")
+    await _check_media_owner_or_shared(media, media_id, user_id)
 
     file_data = await storage.download_file(media["storage_path"], media["bucket_name"])
     if not file_data:
